@@ -1,0 +1,2 @@
+# havamal
+Hávamál memorization app
