@@ -1,4 +1,4 @@
-import { localDateKey, newCard, planDay, reviewCard, stanzaOfDay } from "./srs.js";
+import { isLearned, localDateKey, migrateCard, newCard, planDay, reviewCard, stanzaOfDay } from "./srs.js";
 import { parseBackup, parseTranslation } from "./import-text.js";
 
 const KEY_SETTINGS = "havamal-v1:settings";
@@ -30,12 +30,18 @@ const STAGE_NAME = {
   4: "From the theme",
 };
 
+const LEARN_READS = 3;
+
+const LEARN_HINT = "Read the whole stanza three times, then tap Try recalling it.";
+
 const STAGE_HINT = {
-  1: "The first line is here. Recall the rest.",
-  2: "Recall the missing words.",
-  3: "Only the first letters are left.",
-  4: "Recall the stanza from its number and theme.",
+  1: "Read the first line, say the rest from memory, then tap Show the answer and rate yourself.",
+  2: "Say the missing words, then tap Show the answer and rate yourself.",
+  3: "Say each word from its first letter, then tap Show the answer and rate yourself.",
+  4: "Say the stanza from its number and theme, then tap Show the answer and rate yourself.",
 };
+
+const GRADE_HINT = "Again if you missed it. Hard, Good, or Easy for how well you recalled it.";
 
 const STOP = new Set(
   `a an the of to and or in on for with his her is are was be as by if nor not but from that this who when than so it he she you thy thou thee
@@ -100,7 +106,20 @@ function loadSettings() {
 function loadCards() {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY_CARDS) || "{}");
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    let changed = false;
+    for (const [key, card] of Object.entries(raw)) {
+      if (!card || typeof card !== "object") {
+        changed = true;
+        continue;
+      }
+      const next = migrateCard(card);
+      out[key] = next;
+      if (JSON.stringify(next) !== JSON.stringify(card)) changed = true;
+    }
+    if (changed) localStorage.setItem(KEY_CARDS, JSON.stringify(out));
+    return out;
   } catch {
     return {};
   }
@@ -265,11 +284,11 @@ function viewToday() {
     now,
   });
   const items = studyItems(plan, state.settings.memorize);
-  const dueCount = items.filter((item) => item.kind !== "new").length;
+  const dueCount = items.filter((item) => item.kind === "due").length;
   const newCount = items.filter((item) => item.kind === "new").length;
   const waiting = plan.waiting[0];
   const day = stanzaByNumber(stanzaOfDay(now));
-  const dueItems = items.filter((item) => item.kind !== "new");
+  const dueItems = items.filter((item) => item.kind === "due");
   const newItems = items.filter((item) => item.kind === "new");
   const row = (item) => {
     const stanza = stanzaByNumber(item.n);
@@ -286,11 +305,17 @@ function viewToday() {
   const wait = waiting
     ? `<p class="quiet">Stanza ${waiting.n} comes back in ${minutesUntil(waiting.dueAt)}.</p>`
     : "";
+  const held = heldBackNote(plan.heldBack);
+  const idle = plan.heldBack
+    ? "Nothing is due today."
+    : "Nothing is waiting today. The next new stanza stays for tomorrow.";
   return `<main class="sheet" tabindex="-1">
     ${langSwitch()}
     <p class="summary">${esc(summary)}</p>
-    ${canStart ? `<button class="primary" data-action="begin">Begin</button>` : `<p class="lead">Nothing is waiting today. The next new stanza stays for tomorrow.</p>`}
+    <p class="quiet explain">Due: learned in this version, and ready to review. New: not learned in this version yet. A new stanza starts with the full text.</p>
+    ${canStart ? `<button class="primary" data-action="begin">Begin</button>` : `<p class="lead">${idle}</p>`}
     ${wait}
+    ${held}
     ${list ? `<h2>Due</h2><ol class="due">${list}</ol>${more}` : ""}
     ${newList ? `<h2>New</h2><ol class="due">${newList}</ol>` : ""}
     <section class="day-card">
@@ -302,15 +327,41 @@ function viewToday() {
   </main>`;
 }
 
+function heldBackNote(count) {
+  if (!count) return "";
+  const noun = count === 1
+    ? "1 stanza you have not learned yet waits"
+    : `${count} stanzas you have not learned yet wait`;
+  return `<p class="quiet">${noun} until another day.</p>`;
+}
+
 function langSwitch() {
   const buttons = LANGS.map((lang) => {
     const on = state.settings.memorize === lang.id ? " is-on" : "";
-    return `<button class="seg${on}" data-action="memorize" data-lang="${lang.id}">${lang.short}</button>`;
+    return `<button class="seg${on}" data-action="memorize" data-lang="${lang.id}" aria-label="${esc(langAria(lang.id))}">${lang.short}</button>`;
   }).join("");
-  const mine = state.settings.memorize === "mine" && !state.translation
-    ? `<p class="quiet">No private translation on this device yet. Add one under More.</p>`
-    : "";
-  return `<div class="lang-block"><p class="label">Memorizing</p><div class="seg-row" role="group" aria-label="Language to memorize">${buttons}</div>${mine}</div>`;
+  return `<div class="lang-block"><p class="label">Version</p><div class="seg-row" role="group" aria-label="Version to learn">${buttons}</div><p class="quiet version-note">${esc(versionNote())}</p></div>`;
+}
+
+function langAria(lang) {
+  if (lang === "on") return "Old Norse";
+  if (lang === "en") return "Bellows English";
+  if (lang === "sv") return "Brate Swedish";
+  return "My translation";
+}
+
+function versionNote() {
+  const lang = state.settings.memorize;
+  if (lang === "mine" && !state.translation) {
+    return "Mine is your own translation, stored only on this device. Add it under More. Each version keeps its own due and new stanzas.";
+  }
+  const which = {
+    on: "Norse is the Old Norse text.",
+    en: "Bellows is the English text.",
+    sv: "Brate is the Swedish text.",
+    mine: `Mine is “${state.translation?.name || "My translation"},” stored only on this device.`,
+  }[lang];
+  return `${which} Each version keeps its own due and new stanzas.`;
 }
 
 function viewRead(n) {
@@ -348,17 +399,19 @@ function viewPractice() {
     </main>`;
   }
   const item = session.items[session.index];
-  ensureIntroduced(item);
-  const card = state.cards[cardId(item.lang, item.n)];
   const stanza = stanzaByNumber(item.n);
   const stage = item.stage;
   const lines = textLines(stanza, item.lang);
-  const phase = session.phase;
+  const phase = item.learned ? session.phase : "learn";
+  if (!item.learned) session.phase = "learn";
   const left = session.items.length - session.index;
+  const round = left === 1 ? "1 stanza in this round" : `${left} stanzas in this round`;
   let body;
   if (!lines) {
-    body = `<p class="missing">This stanza has no text in the language you are memorizing.</p>
+    body = `<p class="missing">This stanza has no text in the version you are learning.</p>
       <button class="primary" data-action="skip-missing">Skip</button>`;
+  } else if (phase === "learn") {
+    body = learnBlock(stanza, lines, item.lang, session.learnReads || 1);
   } else if (phase === "prompt") {
     body = `${promptBlock(stanza, lines, stage, item.lang)}
       <button class="primary" data-action="reveal">Show the answer</button>`;
@@ -370,6 +423,7 @@ function viewPractice() {
       ${companion ? `<p class="label companion">${esc(languageLabel(companionLang))}</p>${poemBlock(companion, langAttr(companionLang), "full", companionLang === "en" ? stanza.enGapAfter : null)}` : ""}
       <div class="grade-bar">
         <p class="label grade-label">How did it go?</p>
+        <p class="hint">${esc(GRADE_HINT)}</p>
         <div class="grades">
           <button data-grade="again">Again</button>
           <button data-grade="hard">Hard</button>
@@ -378,14 +432,31 @@ function viewPractice() {
         </div>
       </div>`;
   }
+  const hint = phase === "learn" ? LEARN_HINT : phase === "prompt" ? STAGE_HINT[stage] : "";
   return `<main class="sheet" tabindex="-1">
-    <p class="label">Stage ${stage} of 4 · ${esc(STAGE_NAME[stage])}</p>
-    <p class="quiet">${left} in this round</p>
-    <p class="stanza-num ${stage === 4 ? "" : "small"}">${stanza.n}</p>
-    ${stage === 4 ? `<p class="theme">${esc(stanza.theme)}</p>` : ""}
-    ${phase === "prompt" ? `<p class="hint">${esc(STAGE_HINT[stage])}</p>` : ""}
+    <p class="label">${esc(stageLabel(item, phase))}</p>
+    <p class="quiet">${round}</p>
+    <p class="stanza-num ${phase !== "learn" && stage === 4 ? "" : "small"}">${stanza.n}</p>
+    ${phase !== "learn" && stage === 4 ? `<p class="theme">${esc(stanza.theme)}</p>` : ""}
+    ${hint ? `<p class="hint">${esc(hint)}</p>` : ""}
     ${body}
   </main>`;
+}
+
+function stageLabel(item, phase) {
+  const version = LANGS.find((lang) => lang.id === item.lang)?.short || "";
+  if (phase === "learn") return `${version} · Learn`;
+  return `${version} · Stage ${item.stage} of 4 · ${STAGE_NAME[item.stage]}`;
+}
+
+function learnBlock(stanza, lines, lang, reads) {
+  const count = clamp(reads || 1, 1, LEARN_READS);
+  const ready = count >= LEARN_READS;
+  const action = ready ? "start-recall" : "read-again";
+  const label = ready ? "Try recalling it" : "Read it again";
+  return `${poemBlock(lines, langAttr(lang), "full", lang === "en" ? stanza.enGapAfter : null)}
+    <p class="quiet" aria-live="polite">Read ${count} of ${LEARN_READS}</p>
+    <button class="primary" data-action="${action}">${label}</button>`;
 }
 
 function viewMore() {
@@ -423,7 +494,7 @@ function viewMore() {
       <span>${state.settings.dailyNew}</span>
       <button data-action="daily" data-dir="1" aria-label="More new stanzas">+</button>
     </div>
-    <p class="quiet">The usual number is 1 or 2. Reviews that are due still come up.</p>
+    <p class="quiet">The usual number is 1 or 2. Stanzas you have already learned still come up when they are due.</p>
     <h2>My translation</h2>
     ${mine}
     <label class="field">Name
@@ -448,7 +519,7 @@ function viewMore() {
     ${reset}
     <details>
       <summary>How review works</summary>
-      <p>Each stanza has four stages: the first line, missing words, first letters, then the number and theme alone. You grade yourself. Again brings the stanza back in about ten minutes and steps back a stage. Hard waits a little. Good moves to the next stage and spaces the review out. Easy waits longer. This is the SM-2 pattern used by Anki, with those four grades.</p>
+      <p>A stanza you have not learned in the selected version is shown in full first. Read it three times, then recall it. Recall has four stages: the first line, missing words, first letters, then the number and theme alone. You grade yourself. Again brings the stanza back in about ten minutes and steps back a stage. Hard waits a little. Good moves to the next stage and spaces the review out. Easy waits longer. Due means you already learned that stanza in this version, and it is time to review it. Norse, Bellows, Brate, and Mine each keep their own schedule.</p>
     </details>
     <details>
       <summary>About the texts</summary>
@@ -529,14 +600,15 @@ function letterLine(line) {
 
 function studyItems(plan, lang) {
   const items = [];
-  const push = (n, stage, kind) => {
+  const push = (n, stage, kind, learned) => {
     if (!hasText(n, lang)) return;
-    items.push({ lang, n, stage: stage || 1, kind, retried: false });
+    items.push({ lang, n, stage: stage || 1, kind, learned: Boolean(learned), retried: false });
   };
-  plan.learning.forEach((card) => push(card.n, card.stage, "learning"));
-  plan.reviews.forEach((card) => push(card.n, card.stage, "review"));
-  plan.unfinished.forEach((card) => push(card.n, card.stage, "unfinished"));
-  plan.brandNew.forEach((n) => push(n, 1, "new"));
+  plan.learning.forEach((card) => push(card.n, card.stage, "due", true));
+  plan.reviews.forEach((card) => push(card.n, card.stage, "due", true));
+  plan.started.forEach((card) => push(card.n, card.stage, "new", true));
+  plan.toLearn.forEach((card) => push(card.n, 1, "new", false));
+  plan.brandNew.forEach((n) => push(n, 1, "new", false));
   return items;
 }
 
@@ -556,7 +628,15 @@ function ensureSession() {
     now: new Date(),
   });
   const items = studyItems(plan, lang);
-  state.session = { day: today, lang, items, index: 0, phase: "prompt" };
+  const first = items[0];
+  state.session = {
+    day: today,
+    lang,
+    items,
+    index: 0,
+    phase: first && !first.learned ? "learn" : "prompt",
+    learnReads: 1,
+  };
   state.message = items.length ? "" : waitingMessage(plan);
 }
 
@@ -568,11 +648,33 @@ function waitingMessage(plan) {
   return "Nothing is waiting today.";
 }
 
-function ensureIntroduced(item) {
+function completeLearn(item) {
+  const now = new Date();
   const id = cardId(item.lang, item.n);
-  if (state.cards[id]) return;
-  state.cards[id] = newCard(new Date(), item.lang, item.n);
+  const prev = state.cards[id];
+  if (prev && isLearned(prev)) {
+    item.learned = true;
+    item.stage = prev.stage || item.stage || 1;
+    return;
+  }
+  state.cards[id] = {
+    ...(prev || newCard(now, item.lang, item.n)),
+    lang: item.lang,
+    n: item.n,
+    learned: true,
+    stage: 1,
+    ease: 2.5,
+    interval: 0,
+    reps: 0,
+    lapses: 0,
+    status: "new",
+    dueOn: localDateKey(now),
+    dueAt: null,
+    introducedOn: localDateKey(now),
+  };
   saveCards();
+  item.learned = true;
+  item.stage = 1;
 }
 
 function onClick(event) {
@@ -591,6 +693,19 @@ function onClick(event) {
   else if (action === "read-step") stepRead(Number(btn.dataset.dir));
   else if (action === "reveal") {
     state.session.phase = "answer";
+    render();
+  } else if (action === "read-again") {
+    const session = state.session;
+    if (!session) return;
+    session.learnReads = Math.min(LEARN_READS, (session.learnReads || 1) + 1);
+    render();
+  } else if (action === "start-recall") {
+    const session = state.session;
+    if (!session) return;
+    const item = session.items[session.index];
+    if (!item) return;
+    completeLearn(item);
+    session.phase = "prompt";
     render();
   } else if (action === "skip-missing") advance();
   else if (action === "theme") setTheme(btn.dataset.theme);
@@ -706,20 +821,30 @@ function grade(gradeName) {
   state.cards[id] = updated;
   saveCards();
   if (gradeName === "again" && !item.retried) {
-    session.items.push({ lang: item.lang, n: item.n, stage: updated.stage, retried: true });
+    session.items.push({
+      lang: item.lang,
+      n: item.n,
+      stage: updated.stage,
+      kind: "due",
+      learned: true,
+      retried: true,
+    });
   }
   advance();
 }
 
 function advance() {
-  state.session.index += 1;
-  state.session.phase = "prompt";
-  if (state.session.index < state.session.items.length) {
-    const next = state.session.items[state.session.index];
+  const session = state.session;
+  session.index += 1;
+  session.learnReads = 1;
+  if (session.index < session.items.length) {
+    const next = session.items[session.index];
     const card = state.cards[cardId(next.lang, next.n)];
     if (card && next.retried) next.stage = card.stage;
-    else if (card) next.stage = card.stage || next.stage;
+    else if (card && next.learned) next.stage = card.stage || next.stage;
+    session.phase = next.learned ? "prompt" : "learn";
   } else {
+    session.phase = "prompt";
     state.message = "That is the round.";
   }
   render();
@@ -802,7 +927,7 @@ function sanitizeCards(cards) {
     const lang = card.lang;
     const n = Number(card.n);
     if (!LANGS.some((l) => l.id === lang) || !Number.isInteger(n) || n < 1 || n > 164) continue;
-    out[cardId(lang, n)] = { ...card, lang, n };
+    out[cardId(lang, n)] = migrateCard({ ...card, lang, n });
   }
   return out;
 }

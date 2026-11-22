@@ -1,4 +1,6 @@
 // Anki-style SM-2 for one reader.
+// A stanza is learned in one version only after the reader has studied it there.
+// Due means learned, and scheduled for today. New means not learned in that version.
 // Again: back in 10 minutes, one stage easier, ease down.
 // Hard: same stage, interval × 1.2, ease down a little.
 // Good: next stage (until stage 4), interval 1 day, then 6, then × ease.
@@ -49,10 +51,54 @@ export function newCard(now, lang, n) {
     interval: 0,
     reps: 0,
     lapses: 0,
+    learned: false,
     status: "new",
     dueOn: localDateKey(now),
     dueAt: null,
     introducedOn: localDateKey(now),
+  };
+}
+
+// Learned is explicit once the reader finishes the learn step, or once an older
+// card had already advanced past the first recall stage. A stage-1 card from
+// before that step existed was quizzed without being taught, so it is not due.
+export function isLearned(card) {
+  if (!card || typeof card !== "object") return false;
+  if (card.learned === true) return true;
+  if (card.learned === false) return false;
+  return (Number(card.stage) || 1) >= 2;
+}
+
+export function migrateCard(card) {
+  if (!card || typeof card !== "object") return card;
+  if (card.learned === true) return card;
+  if (card.learned === false) {
+    if (isFreshUnlearned(card)) return card;
+    return normalizeUnlearned(card);
+  }
+  if ((Number(card.stage) || 1) >= 2) return { ...card, learned: true };
+  return normalizeUnlearned(card);
+}
+
+function isFreshUnlearned(card) {
+  return card.status === "new"
+    && card.dueAt == null
+    && (Number(card.stage) || 1) === 1
+    && !(Number(card.interval) || 0)
+    && !(Number(card.reps) || 0);
+}
+
+function normalizeUnlearned(card) {
+  return {
+    ...card,
+    learned: false,
+    status: "new",
+    stage: 1,
+    interval: 0,
+    reps: 0,
+    lapses: 0,
+    ease: 2.5,
+    dueAt: null,
   };
 }
 
@@ -66,6 +112,7 @@ export function reviewCard(card, grade, now) {
   if (grade === "again") {
     return {
       ...card,
+      learned: true,
       stage: Math.max(1, stage - 1),
       ease: clamp(ease0 - 0.2, MIN_EASE, MAX_EASE),
       interval: 0,
@@ -100,6 +147,7 @@ export function reviewCard(card, grade, now) {
 
   return {
     ...card,
+    learned: true,
     stage: nextStage,
     ease,
     interval: Math.min(nextInterval, MAX_INTERVAL),
@@ -115,34 +163,53 @@ export function planDay({ cards, lang, dailyNew, now, stanzaCount = 164 }) {
   const learning = [];
   const waiting = [];
   const reviews = [];
-  const unfinished = [];
+  const fresh = [];
+  const started = [];
   let introduced = 0;
   const have = new Set();
 
   for (const card of Object.values(cards || {})) {
     if (!card || card.lang !== lang || !Number.isInteger(card.n)) continue;
     have.add(card.n);
-    if (card.introducedOn === today) introduced += 1;
-    if (card.status === "learning" && card.dueAt) {
+    const learned = isLearned(card);
+    if (learned && card.introducedOn === today) introduced += 1;
+    if (!learned) {
+      fresh.push(card);
+    } else if (card.status === "learning" && card.dueAt) {
       if (card.dueAt <= now.getTime()) learning.push(card);
       else waiting.push(card);
     } else if (card.status === "review" && card.dueOn && card.dueOn <= today) {
       reviews.push(card);
-    } else if (card.status === "new") {
-      unfinished.push(card);
+    } else if (card.status === "new" || (card.status === "learning" && !card.dueAt)) {
+      started.push(card);
     }
   }
 
   learning.sort((a, b) => a.dueAt - b.dueAt || a.n - b.n);
   waiting.sort((a, b) => a.dueAt - b.dueAt || a.n - b.n);
   reviews.sort((a, b) => String(a.dueOn).localeCompare(String(b.dueOn)) || a.n - b.n);
-  unfinished.sort((a, b) => a.n - b.n);
+  fresh.sort((a, b) => a.n - b.n);
+  started.sort((a, b) => a.n - b.n);
 
   const slots = Math.max(0, (Number(dailyNew) || 0) - introduced);
+  const toLearn = fresh.slice(0, slots);
+  const heldBack = fresh.length - toLearn.length;
+  const room = Math.max(0, slots - toLearn.length);
   const brandNew = [];
-  for (let n = 1; n <= stanzaCount && brandNew.length < slots; n += 1) {
+  for (let n = 1; n <= stanzaCount && brandNew.length < room; n += 1) {
     if (!have.has(n)) brandNew.push(n);
   }
 
-  return { today, learning, waiting, reviews, unfinished, brandNew, introduced, slots };
+  return {
+    today,
+    learning,
+    waiting,
+    reviews,
+    started,
+    toLearn,
+    heldBack,
+    brandNew,
+    introduced,
+    slots,
+  };
 }
