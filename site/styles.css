@@ -209,8 +209,16 @@ button.label {
 
 .summary {
   font-size: 1.35rem;
-  margin: 0.2rem 0 0.8rem;
+  margin: 0.35rem 0 0.3rem;
 }
+
+.version-note,
+.explain {
+  margin: 0.35rem 0 0;
+  font-size: 0.98rem;
+}
+
+.explain { margin-bottom: 0.85rem; }
 
 .primary {
   width: 100%;
@@ -313,6 +321,11 @@ button.label {
 
 .grade-bar .label { margin-top: 0.35rem; }
 
+.grade-bar .hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+}
+
 .grades {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -320,7 +333,7 @@ button.label {
 }
 
 .sheet:has(.grade-bar) {
-  padding-bottom: 9.5rem;
+  padding-bottom: 12.5rem;
 }
 
 .field, .file {

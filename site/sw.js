@@ -1,4 +1,4 @@
-const CACHE = "havamal-v1-shell-2";
+const CACHE = "havamal-v1-shell-3";
 const FILES = [
   "index.html",
   "styles.css",

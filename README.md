@@ -95,7 +95,9 @@ Numbers outside 1–164 are ignored. You can import as many stanzas as you have;
 
 ## Practice
 
-Choose what you are memorizing: Old Norse, Bellows, Brate, or the private text. Each stanza goes through four stages:
+Choose what you are memorizing: Old Norse, Bellows, Brate, or the private text. Each version keeps its own schedule. A stanza you have not learned in that version starts with the full text. Read it three times, then recall it. Due means you already learned it in that version and it is time to review.
+
+Recall then has four stages:
 
 1. The first line is visible. Recall the rest.
 2. Some words are missing.
@@ -104,7 +106,7 @@ Choose what you are memorizing: Old Norse, Bellows, Brate, or the private text. 
 
 You grade yourself: **Again**, **Hard**, **Good**, **Easy**. The schedule is the SM-2 pattern Anki uses with those four buttons. Again comes back in about ten minutes and steps back a stage. Hard waits about as long as last time, a little longer. Good moves you to the next stage (1 day, then 6 days, then the interval times the ease, which starts at 2.5). Easy waits longer and raises the ease a little. From stage 4 onward, Good and Easy stay on full recall and only the interval grows.
 
-**Today** lists what is due and offers new stanzas up to the daily limit. The default is 2. You can set it from 0 to 5 under More. A limit of 0 means reviews only.
+**Today** lists what is due and offers new stanzas up to the daily limit. Due stanzas were learned in the selected version and are scheduled for review. New stanzas have not been learned in that version yet, and practice starts by showing the whole stanza. The default limit is 2. You can set it from 0 to 5 under More. A limit of 0 means reviews only.
 
 **Read** is the poem with the Old Norse and one translation. Tap the translation’s name to switch. Swipe, or use Prev and Next.
 
@@ -112,4 +114,4 @@ You grade yourself: **Again**, **Hard**, **Good**, **Easy**. The schedule is the
 
 ## Progress
 
-Progress and settings live in `localStorage` under the prefix `havamal-v1` (`havamal-v1:settings`, `havamal-v1:cards`). Export writes a `havamal-v1` backup file that also includes a private translation if one is stored. Import replaces what is on the device, after you confirm. Reset erases review history only, after a second confirmation, and leaves the private translation in place until you remove that separately.
+Progress and settings live in `localStorage` under the prefix `havamal-v1` (`havamal-v1:settings`, `havamal-v1:cards`). Each card is stored per version (`sv:1` is Brate stanza 1, `on:1` is the Old Norse). A card remembers whether that stanza has been learned in that version. A saved card from before the learn step, still on the first recall stage, is treated as not yet learned: it comes up under New and shows the full stanza first. A card that had already moved to a later stage keeps its schedule. Export writes a `havamal-v1` backup file that also includes a private translation if one is stored. Import replaces what is on the device, after you confirm. Reset erases review history only, after a second confirmation, and leaves the private translation in place until you remove that separately.
